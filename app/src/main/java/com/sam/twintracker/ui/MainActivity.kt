@@ -16,7 +16,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Medication
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Vaccines
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Settings
@@ -97,7 +108,7 @@ class MainActivity : ComponentActivity() {
             TwinTheme {
                 var tab by rememberSaveable(initialTab) { mutableIntStateOf(initialTab) }
                 val voice by VoiceListenerService.state.collectAsStateWithLifecycle()
-                val titles = listOf("Dashboard", "Log", "Health", "Vaccines", "Settings")
+                val titles = listOf("Home", "Log", "Health", "Vaccines", "Settings")
                 Scaffold(
                     topBar = {
                         TopAppBar(
@@ -114,13 +125,45 @@ class MainActivity : ComponentActivity() {
                         )
                     },
                     bottomBar = {
-                        NavigationBar {
-                            val icons = listOf(
-                                Icons.Default.Dashboard, Icons.AutoMirrored.Filled.List, Icons.Default.Medication,
-                                Icons.Default.Vaccines, Icons.Default.Settings,
-                            )
-                            titles.forEachIndexed { i, t ->
-                                NavigationBarItem(selected = tab == i, onClick = { tab = i }, icon = { Icon(icons[i], null) }, label = { Text(t) })
+                        Column {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            NavigationBar(
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                tonalElevation = 0.dp,
+                            ) {
+                                val selectedIcons = listOf(
+                                    Icons.Filled.Home, Icons.AutoMirrored.Filled.List, Icons.Filled.Medication,
+                                    Icons.Filled.Vaccines, Icons.Filled.Settings,
+                                )
+                                val unselectedIcons = listOf(
+                                    Icons.Outlined.Home, Icons.AutoMirrored.Outlined.List, Icons.Outlined.Medication,
+                                    Icons.Outlined.Vaccines, Icons.Outlined.Settings,
+                                )
+                                titles.forEachIndexed { i, t ->
+                                    val selected = tab == i
+                                    NavigationBarItem(
+                                        selected = selected,
+                                        onClick = { tab = i },
+                                        icon = { Icon(if (selected) selectedIcons[i] else unselectedIcons[i], null) },
+                                        label = {
+                                            Text(
+                                                t,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Clip,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                            )
+                                        },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        ),
+                                    )
+                                }
                             }
                         }
                     },
