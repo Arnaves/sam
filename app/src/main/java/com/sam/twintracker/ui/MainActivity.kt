@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Vaccines
+import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sam.twintracker.ui.screens.DashboardScreen
+import com.sam.twintracker.ui.screens.HealthScreen
 import com.sam.twintracker.ui.screens.LogScreen
 import com.sam.twintracker.ui.screens.SettingsScreen
 import com.sam.twintracker.ui.screens.VaccineScreen
@@ -48,6 +50,8 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_TAB = "tab"
+        const val TAB_HEALTH = 2
+        const val TAB_VACCINES = 3
     }
 
     private val vm: MainViewModel by viewModels()
@@ -93,11 +97,11 @@ class MainActivity : ComponentActivity() {
             TwinTheme {
                 var tab by rememberSaveable(initialTab) { mutableIntStateOf(initialTab) }
                 val voice by VoiceListenerService.state.collectAsStateWithLifecycle()
-                val titles = listOf("Dashboard", "Daily log", "Vaccines", "Settings")
+                val titles = listOf("Dashboard", "Log", "Health", "Vaccines", "Settings")
                 Scaffold(
                     topBar = {
                         TopAppBar(
-                            title = { Text(if (tab == 0) "Twin Tracker" else titles[tab]) },
+                            title = { Text(if (tab == 0) "Twin Tracker" else if (tab == 1) "Daily log" else titles[tab]) },
                             actions = {
                                 IconButton(onClick = ::toggleVoice) {
                                     Icon(
@@ -111,7 +115,10 @@ class MainActivity : ComponentActivity() {
                     },
                     bottomBar = {
                         NavigationBar {
-                            val icons = listOf(Icons.Default.Dashboard, Icons.AutoMirrored.Filled.List, Icons.Default.Vaccines, Icons.Default.Settings)
+                            val icons = listOf(
+                                Icons.Default.Dashboard, Icons.AutoMirrored.Filled.List, Icons.Default.Medication,
+                                Icons.Default.Vaccines, Icons.Default.Settings,
+                            )
                             titles.forEachIndexed { i, t ->
                                 NavigationBarItem(selected = tab == i, onClick = { tab = i }, icon = { Icon(icons[i], null) }, label = { Text(t) })
                             }
@@ -122,7 +129,8 @@ class MainActivity : ComponentActivity() {
                         when (tab) {
                             0 -> DashboardScreen(vm, ::toggleVoice)
                             1 -> LogScreen(vm)
-                            2 -> VaccineScreen(vm)
+                            TAB_HEALTH -> HealthScreen(vm)
+                            TAB_VACCINES -> VaccineScreen(vm)
                             else -> SettingsScreen(vm)
                         }
                     }

@@ -33,7 +33,8 @@ interface EntryDao {
                        OR IFNULL(subtype,'') LIKE '%' || :q || '%'
                        OR IFNULL(side,'') LIKE '%' || :q || '%'
                        OR IFNULL(note,'') LIKE '%' || :q || '%'
-                       OR IFNULL(rawText,'') LIKE '%' || :q || '%')
+                       OR IFNULL(rawText,'') LIKE '%' || :q || '%'
+                       OR IFNULL(unit,'') LIKE '%' || :q || '%')
         ORDER BY timestamp DESC
         """
     )
@@ -47,6 +48,27 @@ interface EntryDao {
 
     @Query("SELECT * FROM entries ORDER BY timestamp ASC")
     suspend fun all(): List<Entry>
+}
+
+@Dao
+interface MedicineDao {
+    @Query("SELECT * FROM medicine_schedules ORDER BY active DESC, nextDueAt")
+    fun observeAll(): Flow<List<MedicineSchedule>>
+
+    @Query("SELECT * FROM medicine_schedules")
+    suspend fun all(): List<MedicineSchedule>
+
+    @Query("SELECT * FROM medicine_schedules WHERE id = :id")
+    suspend fun get(id: Long): MedicineSchedule?
+
+    @Insert
+    suspend fun insert(s: MedicineSchedule): Long
+
+    @Update
+    suspend fun update(s: MedicineSchedule)
+
+    @Delete
+    suspend fun delete(s: MedicineSchedule)
 }
 
 @Dao

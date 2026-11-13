@@ -18,6 +18,7 @@ data class BabyStats(
     val lastFeed: Entry?,
     val lastDiaper: Entry?,
     val lastSleep: Entry?,
+    val lastTemperature: Entry?,
     /** Mean minutes between consecutive feeds within the range. */
     val avgFeedIntervalMin: Int?,
 ) {
@@ -60,6 +61,7 @@ object Analytics {
             lastFeed = feeds.lastOrNull(),
             lastDiaper = mine.lastOrNull { it.type == EntryType.OUTPUT },
             lastSleep = mine.lastOrNull { it.type == EntryType.SLEEP },
+            lastTemperature = mine.lastOrNull { it.type == EntryType.TEMPERATURE },
             avgFeedIntervalMin = if (intervals.isEmpty()) null else intervals.average().toInt(),
         )
     }

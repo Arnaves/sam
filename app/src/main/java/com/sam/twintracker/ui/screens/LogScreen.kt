@@ -31,6 +31,10 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Vaccines
+import androidx.compose.material.icons.filled.Medication
+import androidx.compose.material.icons.filled.Thermostat
+import androidx.compose.material.icons.filled.MonitorWeight
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -95,7 +99,7 @@ fun LogScreen(vm: MainViewModel) {
                 value = f.query,
                 onValueChange = { q -> vm.updateFilter { it.copy(query = q) } },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                placeholder = { Text("Search: formula, poop, BCG, fever…") },
+                placeholder = { Text("Search: formula, poop, BCG, paracetamol…") },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 trailingIcon = {
                     if (f.query.isNotEmpty()) IconButton(onClick = { vm.updateFilter { it.copy(query = "") } }) { Icon(Icons.Default.Clear, "Clear") }
@@ -186,6 +190,10 @@ fun iconFor(type: EntryType): ImageVector = when (type) {
     EntryType.OUTPUT -> Icons.Default.BabyChangingStation
     EntryType.SLEEP -> Icons.Default.Bedtime
     EntryType.VACCINE -> Icons.Default.Vaccines
+    EntryType.MEDICINE -> Icons.Default.Medication
+    EntryType.TEMPERATURE -> Icons.Default.Thermostat
+    EntryType.WEIGHT -> Icons.Default.MonitorWeight
+    EntryType.HEIGHT -> Icons.Default.Straighten
     EntryType.NOTE -> Icons.Default.Description
 }
 

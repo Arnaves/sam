@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -67,19 +68,32 @@ fun SettingsScreen(vm: MainViewModel) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     var name by remember(b.id, b.name) { mutableStateOf(b.name) }
+                    var aliases by remember(b.id, b.aliases) { mutableStateOf(b.aliases) }
                     OutlinedTextField(
                         name, { name = it }, Modifier.fillMaxWidth(),
                         label = { Text("Baby ${b.id} name", color = babyColor(b.id)) }, singleLine = true,
+                    )
+                    OutlinedTextField(
+                        aliases, { aliases = it }, Modifier.fillMaxWidth(),
+                        label = { Text("Other names / nicknames") },
+                        placeholder = { Text("e.g. Chintu, Munna, Golu") },
+                        supportingText = { Text("Separate with commas. Any of these work in voice commands.") },
                     )
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { pickDob = b }) {
                             Text(b.birthDate?.let { "Born ${Fmt.shortDate(it)}" } ?: "Set birth date")
                         }
                         Text(Fmt.age(b.birthDate, now), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                        TextButton(enabled = name.isNotBlank() && name != b.name, onClick = { vm.saveBaby(b.copy(name = name.trim())) }) { Text("Save") }
+                        TextButton(
+                            enabled = name.isNotBlank() && (name != b.name || aliases != b.aliases),
+                            onClick = {
+                                val clean = aliases.split(',', ';').map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString(", ")
+                                vm.saveBaby(b.copy(name = name.trim(), aliases = clean))
+                            },
+                        ) { Text("Save") }
                     }
                     Text(
-                        "Voice trigger: \"entry for baby ${b.id}\"" + if (b.name != "Baby ${b.id}") " or \"entry for ${b.name}\"" else "",
+                        "Say: " + (listOf("baby ${b.id}") + b.allNames.filter { it != "Baby ${b.id}" }).joinToString(" / ") { "\"$it\"" },
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -89,7 +103,19 @@ fun SettingsScreen(vm: MainViewModel) {
         Text("Voice logging", style = MaterialTheme.typography.titleMedium)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                PrefSwitch(vm, TwinApp.PREF_TTS, true, "Spoken confirmation", "Reads back what was saved")
+                var wake by remember { mutableStateOf(vm.prefs.getString(TwinApp.PREF_WAKE_WORD, null) ?: "baby tracker") }
+                OutlinedTextField(
+                    wake, { wake = it }, Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("Wake word") },
+                    supportingText = { Text("Start every request with this. Takes effect the next time listening starts.") },
+                    trailingIcon = {
+                        TextButton(enabled = wake.isNotBlank(), onClick = {
+                            vm.prefs.edit { putString(TwinApp.PREF_WAKE_WORD, wake.trim().lowercase()) }
+                            Toast.makeText(ctx, "Wake word saved", Toast.LENGTH_SHORT).show()
+                        }) { Text("Save") }
+                    },
+                )
+                PrefSwitch(vm, TwinApp.PREF_TTS, true, "Spoken replies", "Reads back what was saved and answers questions")
                 PrefSwitch(vm, TwinApp.PREF_MUTE_BEEP, true, "Silence listening beep", "Mutes media volume while the mic restarts (unmuted for confirmations)")
                 PrefSwitch(vm, TwinApp.PREF_OFFLINE, false, "Prefer offline recognition", "Needs the offline speech pack for your language")
                 Spacer(Modifier.height(8.dp))
@@ -97,6 +123,14 @@ fun SettingsScreen(vm: MainViewModel) {
                 Text("Highlight a baby when not fed for ${hours.toInt()} h", style = MaterialTheme.typography.bodyMedium)
                 Slider(hours, { hours = it }, valueRange = 1f..6f, steps = 4,
                     onValueChangeFinished = { vm.prefs.edit { putInt(TwinApp.PREF_FEED_ALERT_HOURS, hours.toInt()) } })
+                var tempUnit by remember { mutableStateOf(vm.prefs.getString(TwinApp.PREF_TEMP_UNIT, "°F") ?: "°F") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Temperature unit", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    listOf("°F", "°C").forEach { u ->
+                        FilterChip(selected = tempUnit == u, onClick = { tempUnit = u; vm.prefs.edit { putString(TwinApp.PREF_TEMP_UNIT, u) } },
+                            label = { Text(u) }, modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
                 OutlinedButton(onClick = {
                     ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                 }) { Text("Battery optimisation settings") }
@@ -110,21 +144,36 @@ fun SettingsScreen(vm: MainViewModel) {
         Text("Voice commands", style = MaterialTheme.typography.titleMedium)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val wakeWord = vm.prefs.getString(TwinApp.PREF_WAKE_WORD, null) ?: "baby tracker"
+                val n1 = babies.firstOrNull { it.id == 1 }?.let { it.aliasList.firstOrNull() ?: it.name } ?: "baby 1"
+                val n2 = babies.firstOrNull { it.id == 2 }?.let { it.aliasList.firstOrNull() ?: it.name } ?: "baby 2"
+                Text("Log", style = MaterialTheme.typography.labelLarge)
                 listOf(
-                    "entry for baby 1 fed 120 ml formula",
-                    "entry for baby 2 breastfed 15 minutes left side",
-                    "entry for baby 1 wet diaper",
-                    "entry for baby 2 pooped",
-                    "entry for baby 1 wet and dirty diaper",
-                    "entry for baby 2 slept 2 hours",
-                    "entry for baby 1 vaccine BCG and hepatitis B",
-                    "entry for both babies fed 90 ml at 3:30 pm",
-                    "entry for baby 2 fed 4 oz 20 minutes ago",
-                    "entry for baby 1 note slight fever",
-                ).forEach { Text("• \"$it\"", style = MaterialTheme.typography.bodySmall) }
+                    "$n1 fed 120 ml formula",
+                    "$n2 breastfed 15 minutes left side",
+                    "$n1 wet diaper / pooped",
+                    "$n2 slept 2 hours",
+                    "both babies fed 90 ml at 3:30 pm",
+                    "$n1 paracetamol 2.5 ml every 6 hours for 3 days",
+                    "$n2 vitamin D 1 ml",
+                    "$n1 temperature 100.2",
+                    "$n2 weight 4.2 kg · height 55 cm",
+                    "$n1 vaccine BCG",
+                ).forEach { Text("• \"$wakeWord, $it\"", style = MaterialTheme.typography.bodySmall) }
+                Spacer(Modifier.height(4.dp))
+                Text("Ask", style = MaterialTheme.typography.labelLarge)
+                listOf(
+                    "which baby should I feed now?",
+                    "when did $n1 last eat?",
+                    "when did $n2 last poop?",
+                    "when is the next medicine?",
+                    "what was $n1's last temperature?",
+                    "how much did $n2 eat today?",
+                    "when is the next vaccine?",
+                ).forEach { Text("• \"$wakeWord, $it\"", style = MaterialTheme.typography.bodySmall) }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "You can also say just \"entry for baby 1\", wait for \"go ahead\", then say the details.",
+                    "You can also say just \"$wakeWord\", wait for \"Yes?\", then say the rest. If you don't say which baby, it asks.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

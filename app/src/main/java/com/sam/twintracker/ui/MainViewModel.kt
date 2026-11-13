@@ -11,8 +11,10 @@ import com.sam.twintracker.data.Baby
 import com.sam.twintracker.data.BabyStats
 import com.sam.twintracker.data.Entry
 import com.sam.twintracker.data.EntryType
+import com.sam.twintracker.data.MedicineSchedule
 import com.sam.twintracker.data.Repository
 import com.sam.twintracker.data.VaccineDose
+import com.sam.twintracker.voice.Assistant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -38,6 +40,8 @@ data class LogFilter(
     val allDates: Boolean = false,
 )
 
+val HEALTH_TYPES = setOf(EntryType.MEDICINE, EntryType.TEMPERATURE, EntryType.WEIGHT, EntryType.HEIGHT)
+
 data class Dashboard(val rangeDays: Int, val dayStarts: List<Long>, val stats: Map<Int, BabyStats>)
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -51,6 +55,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val doses: StateFlow<List<VaccineDose>> = repo.vaccineDoses
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val schedules: StateFlow<List<MedicineSchedule>> = repo.medicineSchedules
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // ------------------------------------------------------------- ask (typed questions / commands)
+
+    private val assistant = Assistant(repo, prefs)
+    val askReply = MutableStateFlow<String?>(null)
+    private var pendingBabyFor: String? = null
+
+    fun ask(text: String) = viewModelScope.launch {
+        if (text.isBlank()) return@launch
+        val pending = pendingBabyFor
+        val reply = if (pending != null && assistant.parser().babiesIn(text).isNotEmpty()) assistant.onBabyAnswer(text, pending)
+        else assistant.onRequest(text)
+        pendingBabyFor = reply.awaitingBabyFor
+        askReply.value = if (reply.awaitingRequest) "Type a question or an entry, e.g. \"which baby to feed now\"" else reply.text
+    }
+
+    // ------------------------------------------------------------- health
+
+    val healthBaby = MutableStateFlow(1)
+
+    /** Medicine doses and measurements for the selected baby, newest first. */
+    val healthEntries: StateFlow<List<Entry>> = healthBaby.flatMapLatest { b ->
+        repo.searchRange(0, Long.MAX_VALUE, b, null, "").map { list -> list.filter { it.type in HEALTH_TYPES } }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun giveDose(s: MedicineSchedule) = viewModelScope.launch { repo.giveScheduledDose(s.id) }
+    fun stopSchedule(s: MedicineSchedule) = viewModelScope.launch { repo.stopSchedule(s) }
+    fun deleteSchedule(s: MedicineSchedule) = viewModelScope.launch { repo.deleteSchedule(s) }
+    fun addSchedule(s: MedicineSchedule, logDoseNow: Boolean) = viewModelScope.launch {
+        val saved = repo.addSchedule(s)
+        if (logDoseNow) repo.giveScheduledDose(saved.id)
+    }
+
+    val canExactAlarms get() = getApplication<TwinApp>().medicineAlarms.canExact()
 
     /** Ticks every 30 s so "time since last feed" stays fresh. */
     val now: StateFlow<Long> = flow {
@@ -97,12 +138,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
                 fun esc(s: String?) = "\"" + (s ?: "").replace("\"", "\"\"") + "\""
                 getApplication<Application>().contentResolver.openOutputStream(uri)!!.bufferedWriter().use { w ->
-                    w.appendLine("time,baby,type,subtype,amount_ml,duration_min,side,note,source,voice_text")
+                    w.appendLine("time,baby,type,subtype,amount_ml,duration_min,side,value,unit,note,source,voice_text")
                     repo.allEntries().forEach { e ->
                         w.appendLine(
                             listOf(
                                 fmt.format(Date(e.timestamp)), esc(names[e.baby]), e.type.label, esc(e.subtype),
-                                e.amountMl?.toString() ?: "", e.durationMin?.toString() ?: "", esc(e.side), esc(e.note),
+                                e.amountMl?.toString() ?: "", e.durationMin?.toString() ?: "", esc(e.side),
+                                e.value?.toString() ?: "", esc(e.unit), esc(e.note),
                                 e.source, esc(e.rawText),
                             ).joinToString(",")
                         )

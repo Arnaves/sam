@@ -62,6 +62,8 @@ fun EntryEditorDialog(
     onDismiss: () -> Unit,
     onSave: (Entry) -> Unit,
     onDelete: ((Entry) -> Unit)? = null,
+    defaultTempUnit: String = "°F",
+    medicineSuggestions: List<String> = emptyList(),
 ) {
     var baby by remember { mutableStateOf(initial.baby) }
     var bothBabies by remember { mutableStateOf(false) }
@@ -72,6 +74,9 @@ fun EntryEditorDialog(
     var side by remember { mutableStateOf(initial.side) }
     var note by remember { mutableStateOf(initial.note ?: "") }
     var timestamp by remember { mutableLongStateOf(initial.timestamp) }
+    var medName by remember { mutableStateOf(if (initial.type == EntryType.MEDICINE) initial.subtype.orEmpty() else "") }
+    var value by remember { mutableStateOf(initial.value?.let { Fmt.num(it, 2) } ?: "") }
+    var unit by remember { mutableStateOf(initial.unit) }
     var showDate by remember { mutableStateOf(false) }
     var showTime by remember { mutableStateOf(false) }
     val isNew = initial.id == 0L
@@ -95,7 +100,16 @@ fun EntryEditorDialog(
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     EntryType.entries.forEach { t ->
                         FilterChip(selected = type == t, onClick = {
-                            if (type != t) { type = t; subtype = null; side = null }
+                            if (type != t) {
+                                type = t; subtype = null; side = null
+                                unit = when (t) {
+                                    EntryType.TEMPERATURE -> defaultTempUnit
+                                    EntryType.WEIGHT -> "kg"
+                                    EntryType.HEIGHT -> "cm"
+                                    EntryType.MEDICINE -> "ml"
+                                    else -> null
+                                }
+                            }
                         }, label = { Text(t.label) })
                     }
                 }
@@ -143,6 +157,42 @@ fun EntryEditorDialog(
                     )
                 }
 
+                if (type == EntryType.MEDICINE) {
+                    OutlinedTextField(medName, { medName = it }, Modifier.fillMaxWidth(), label = { Text("Medicine name") }, singleLine = true)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        (medicineSuggestions + listOf("Paracetamol", "Vitamin D", "Iron", "Gripe water", "ORS", "Saline drops"))
+                            .distinct().take(8).forEach { m ->
+                                FilterChip(selected = medName.equals(m, true), onClick = { medName = m }, label = { Text(m) })
+                            }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value, { value = it.filter { c -> c.isDigit() || c == '.' } }, Modifier.weight(1f),
+                            label = { Text("Dose") }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        )
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("ml", "drops", "mg", "tablet", "puffs").forEach { u ->
+                            FilterChip(selected = unit == u, onClick = { unit = u }, label = { Text(u) })
+                        }
+                    }
+                }
+                if (type == EntryType.TEMPERATURE || type == EntryType.WEIGHT || type == EntryType.HEIGHT) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value, { value = it.filter { c -> c.isDigit() || c == '.' } }, Modifier.weight(1f),
+                            label = { Text(when (type) { EntryType.TEMPERATURE -> "Temperature"; EntryType.WEIGHT -> "Weight (kg)"; else -> "Height (cm)" }) },
+                            singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        )
+                        if (type == EntryType.TEMPERATURE) {
+                            listOf("°F", "°C").forEach { u ->
+                                FilterChip(selected = unit == u, onClick = { unit = u }, label = { Text(u) })
+                            }
+                        }
+                    }
+                }
+
                 OutlinedTextField(note, { note = it }, Modifier.fillMaxWidth(), label = { Text("Note") }, minLines = 2)
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -166,9 +216,12 @@ fun EntryEditorDialog(
         },
         confirmButton = {
             TextButton(onClick = {
+                val hasValue = type in setOf(EntryType.MEDICINE, EntryType.TEMPERATURE, EntryType.WEIGHT, EntryType.HEIGHT)
                 val base = initial.copy(
                     type = type,
-                    subtype = subtype,
+                    subtype = if (type == EntryType.MEDICINE) medName.trim().ifBlank { "Medicine" } else subtype,
+                    value = if (hasValue) value.toDoubleOrNull() else null,
+                    unit = if (hasValue && value.toDoubleOrNull() != null) unit else null,
                     amountMl = if (type == EntryType.FEED) amount.toDoubleOrNull() else null,
                     durationMin = if (type == EntryType.FEED || type == EntryType.SLEEP) duration.toIntOrNull() else null,
                     side = if (type == EntryType.FEED) side else null,

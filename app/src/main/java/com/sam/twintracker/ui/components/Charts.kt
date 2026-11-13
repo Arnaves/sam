@@ -171,3 +171,82 @@ private fun compact(v: Double): String = when {
     v % 1.0 == 0.0 -> v.toInt().toString()
     else -> "%.1f".format(v)
 }
+
+/**
+ * Single-series line chart over time (one baby's weight, height or temperature). Tap to read a
+ * point; the latest point is shown by default. An optional [threshold] draws a dashed reference
+ * line (e.g. fever).
+ */
+@Composable
+fun TimeLineChart(
+    points: List<Pair<Long, Double>>,
+    color: Color,
+    valueFormat: (Double) -> String,
+    dateFormat: (Long) -> String,
+    modifier: Modifier = Modifier,
+    threshold: Double? = null,
+    thresholdColor: Color = color,
+) {
+    if (points.isEmpty()) return
+    val measurer = rememberTextMeasurer()
+    val ink = MaterialTheme.colorScheme.onSurfaceVariant
+    val grid = MaterialTheme.colorScheme.outlineVariant
+    val surface = MaterialTheme.colorScheme.surface
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(color = ink, fontSize = 10.sp)
+    var selected by remember(points.size) { mutableStateOf(points.lastIndex) }
+    val values = points.map { it.second } + listOfNotNull(threshold)
+    val lo0 = values.min()
+    val hi0 = values.max()
+    val pad = ((hi0 - lo0) * 0.15).coerceAtLeast(if (hi0 == 0.0) 1.0 else hi0 * 0.02)
+    val lo = lo0 - pad
+    val hi = hi0 + pad
+    val t0 = points.first().first
+    val t1 = points.last().first.coerceAtLeast(t0 + 1)
+
+    Column(modifier) {
+        val sel = selected.coerceIn(0, points.lastIndex)
+        Text(
+            "${dateFormat(points[sel].first)}  ·  ${valueFormat(points[sel].second)}",
+            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.height(6.dp))
+        Canvas(
+            Modifier.fillMaxWidth().height(140.dp).pointerInput(points) {
+                detectTapGestures { pos ->
+                    val left = 36.dp.toPx(); val right = 8.dp.toPx()
+                    val w = size.width - left - right
+                    selected = points.indices.minByOrNull { i ->
+                        val x = if (points.size == 1) left + w / 2 else left + w * ((points[i].first - t0).toFloat() / (t1 - t0))
+                        kotlin.math.abs(x - pos.x)
+                    } ?: 0
+                }
+            }
+        ) {
+            val left = 36.dp.toPx(); val right = 8.dp.toPx()
+            val top = 6.dp.toPx(); val bottom = size.height - 6.dp.toPx()
+            val w = size.width - left - right
+            fun x(t: Long) = if (points.size == 1) left + w / 2 else left + w * ((t - t0).toFloat() / (t1 - t0))
+            fun y(v: Double) = (bottom - (bottom - top) * ((v - lo) / (hi - lo))).toFloat()
+            for (i in 0..2) {
+                val v = lo + (hi - lo) * i / 2
+                val yy = y(v)
+                drawLine(grid, Offset(left, yy), Offset(size.width - right, yy), 1f, pathEffect = if (i == 0) null else PathEffect.dashPathEffect(floatArrayOf(4f, 6f)))
+                drawText(measurer, compact(v), topLeft = Offset(0f, yy - 7.dp.toPx()), style = labelStyle)
+            }
+            threshold?.let {
+                val yy = y(it)
+                drawLine(thresholdColor, Offset(left, yy), Offset(size.width - right, yy), 2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)))
+            }
+            if (points.size > 1) {
+                val path = Path()
+                points.forEachIndexed { i, (t, v) -> if (i == 0) path.moveTo(x(t), y(v)) else path.lineTo(x(t), y(v)) }
+                drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+            }
+            points.forEachIndexed { i, (t, v) ->
+                val r = if (i == sel) 5.dp.toPx() else 3.5.dp.toPx()
+                drawCircle(surface, r + 2.dp.toPx(), Offset(x(t), y(v)))
+                drawCircle(color, r, Offset(x(t), y(v)))
+            }
+        }
+    }
+}

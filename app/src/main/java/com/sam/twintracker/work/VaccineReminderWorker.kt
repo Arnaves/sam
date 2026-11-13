@@ -41,7 +41,7 @@ class VaccineReminderWorker(context: Context, params: WorkerParameters) : Corout
         }
         val open = PendingIntent.getActivity(
             applicationContext, 2,
-            Intent(applicationContext, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, 2),
+            Intent(applicationContext, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, MainActivity.TAB_VACCINES),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val n = NotificationCompat.Builder(applicationContext, TwinApp.CHANNEL_REMINDERS)

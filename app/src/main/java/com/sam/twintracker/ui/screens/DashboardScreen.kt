@@ -20,6 +20,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Thermostat
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,6 +57,8 @@ import com.sam.twintracker.data.OutputKind
 import com.sam.twintracker.data.Repository
 import com.sam.twintracker.data.VaccineDose
 import com.sam.twintracker.data.formatMinutes
+import com.sam.twintracker.data.formatValue
+import com.sam.twintracker.data.MedicineSchedule
 import com.sam.twintracker.ui.Fmt
 import com.sam.twintracker.ui.MainViewModel
 import com.sam.twintracker.ui.components.GroupedBarChart
@@ -66,6 +76,9 @@ fun DashboardScreen(vm: MainViewModel, onToggleVoice: () -> Unit) {
     val doses by vm.doses.collectAsStateWithLifecycle()
     val now by vm.now.collectAsStateWithLifecycle()
     val voice by VoiceListenerService.state.collectAsStateWithLifecycle()
+    val schedules by vm.schedules.collectAsStateWithLifecycle()
+    val askReply by vm.askReply.collectAsStateWithLifecycle()
+    val wakeWord = vm.prefs.getString(TwinApp.PREF_WAKE_WORD, null)?.takeIf { it.isNotBlank() } ?: "baby tracker"
     var editor by remember { mutableStateOf<Entry?>(null) }
     val alertHours = vm.prefs.getInt(TwinApp.PREF_FEED_ALERT_HOURS, 3)
 
@@ -73,7 +86,8 @@ fun DashboardScreen(vm: MainViewModel, onToggleVoice: () -> Unit) {
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        VoiceCard(voice, onToggleVoice)
+        VoiceCard(voice, wakeWord, onToggleVoice)
+        AskCard(askReply, vm::ask)
 
         val d = dash ?: return@Column
         val b1 = babies.firstOrNull { it.id == 1 } ?: Baby(1, "Baby 1")
@@ -82,7 +96,9 @@ fun DashboardScreen(vm: MainViewModel, onToggleVoice: () -> Unit) {
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             listOf(b1, b2).forEach { baby ->
                 BabyTodayCard(
-                    baby, d.stats.getValue(baby.id), doses.filter { it.baby == baby.id }, now, alertHours,
+                    baby, d.stats.getValue(baby.id), doses.filter { it.baby == baby.id },
+                    schedules.filter { it.baby == baby.id && it.active && it.nextDueAt != null }.minByOrNull { it.nextDueAt!! },
+                    now, alertHours,
                     onQuick = { editor = it },
                     onQuickSave = { vm.addEntry(it) },
                     modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -132,24 +148,47 @@ fun DashboardScreen(vm: MainViewModel, onToggleVoice: () -> Unit) {
 }
 
 @Composable
-private fun VoiceCard(state: VoiceListenerService.State, onToggle: () -> Unit) {
+private fun AskCard(reply: String?, onAsk: (String) -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    Card {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = text, onValueChange = { text = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Ask or log: which baby to feed now?") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onAsk(text); text = "" }),
+                trailingIcon = {
+                    IconButton(enabled = text.isNotBlank(), onClick = { onAsk(text); text = "" }) {
+                        Icon(Icons.AutoMirrored.Filled.Send, "Send")
+                    }
+                },
+            )
+            if (reply != null) Text(reply, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun VoiceCard(state: VoiceListenerService.State, wakeWord: String, onToggle: () -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
                     when {
-                        state.armedFor.isNotEmpty() -> "Go ahead — listening for the entry…"
+                        state.awaiting -> "Listening for your request…"
                         state.running -> "Voice logging is on"
                         else -> "Voice logging is off"
                     },
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                    state.error ?: if (state.running) "Say \"entry for baby 1 …\" or \"entry for baby 2 …\"" else "Tap the mic to listen in the background",
+                    state.error ?: if (state.running) "Say \"$wakeWord\", then an entry or a question" else "Tap Start to listen in the background",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (state.lastSaved.isNotBlank()) {
-                    Text("Saved: ${state.lastSaved}", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(state.lastSaved, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 } else if (state.lastHeard.isNotBlank()) {
                     Text("Heard: \"${state.lastHeard}\"", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -168,6 +207,7 @@ private fun BabyTodayCard(
     baby: Baby,
     stats: BabyStats,
     doses: List<VaccineDose>,
+    nextMedicine: MedicineSchedule?,
     now: Long,
     alertHours: Int,
     onQuick: (Entry) -> Unit,
@@ -207,6 +247,30 @@ private fun BabyTodayCard(
             StatLine("Wet / dirty", "${t.wet} / ${t.dirty}")
             StatLine("Sleep", if (t.sleepMin == 0) "–" else formatMinutes(t.sleepMin))
             stats.avgFeedIntervalMin?.let { StatLine("Feed gap", "~${formatMinutes(it)}") }
+
+            stats.lastTemperature?.takeIf { now - it.timestamp < 24 * 3_600_000L }?.let { t ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (t.isFever) {
+                        Icon(Icons.Default.Thermostat, "Fever", tint = StatusColors.critical, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    Text(
+                        "Temp ${formatValue(t.value ?: 0.0, t.unit)}" + if (t.isFever) " · fever" else "",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (t.isFever) StatusColors.critical else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (t.isFever) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+            nextMedicine?.let { m ->
+                val mins = (m.nextDueAt!! - now) / 60_000
+                Text(
+                    "${m.name}: " + if (mins <= 0) "due now" else "in ${formatMinutes(mins.toInt())}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (mins <= 0) StatusColors.warning else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (mins <= 0) FontWeight.SemiBold else FontWeight.Normal,
+                )
+            }
 
             val next = doses.filter { it.givenAt == null }.minByOrNull { it.dueAgeDays }
             if (next != null) {

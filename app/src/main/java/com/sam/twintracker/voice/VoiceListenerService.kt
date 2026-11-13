@@ -26,8 +26,6 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.sam.twintracker.R
 import com.sam.twintracker.TwinApp
-import com.sam.twintracker.data.formatMl
-import com.sam.twintracker.data.formatMinutes
 import com.sam.twintracker.ui.MainActivity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,7 +48,8 @@ class VoiceListenerService : LifecycleService() {
         val listening: Boolean = false,
         val lastHeard: String = "",
         val lastSaved: String = "",
-        val armedFor: List<Int> = emptyList(),
+        /** Wake word heard (or "which baby?" asked) — listening for the follow-up. */
+        val awaiting: Boolean = false,
         val error: String? = null,
     )
 
@@ -67,6 +66,14 @@ class VoiceListenerService : LifecycleService() {
             ContextCompat.startForegroundService(context, Intent(context, VoiceListenerService::class.java))
         }
 
+        @Volatile
+        private var instance: VoiceListenerService? = null
+
+        /** Speak [text] if the listener is running (used by medicine alarms). */
+        fun announce(text: String) {
+            Handler(Looper.getMainLooper()).post { instance?.announceInternal(text) }
+        }
+
         fun stop(context: Context) {
             context.startService(Intent(context, VoiceListenerService::class.java).setAction(ACTION_STOP))
         }
@@ -78,26 +85,18 @@ class VoiceListenerService : LifecycleService() {
     private var ttsReady = false
     private var speaking = false
     private var stopped = false
-    private var armedFor: List<Int> = emptyList()
     private var armedUntil = 0L
-    private var parser = CommandParser()
-    private var babyNames: Map<Int, String> = emptyMap()
     private var wakeLock: PowerManager.WakeLock? = null
     private var mutedStream = false
     private var consecutiveErrors = 0
 
     private val prefs by lazy { getSharedPreferences(TwinApp.PREFS, MODE_PRIVATE) }
     private val audio by lazy { getSystemService(AUDIO_SERVICE) as AudioManager }
-    private val repo by lazy { (application as TwinApp).repository }
+    private val assistant by lazy { Assistant((application as TwinApp).repository, prefs) }
 
     override fun onCreate() {
         super.onCreate()
-        lifecycleScope.launch {
-            repo.babies.collect { list ->
-                parser = CommandParser(list.associate { it.name to it.id })
-                babyNames = list.associate { it.id to it.name }
-            }
-        }
+        instance = this
         tts = TextToSpeech(this) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
             if (ttsReady) {
@@ -130,7 +129,7 @@ class VoiceListenerService : LifecycleService() {
         }
         try {
             ServiceCompat.startForeground(
-                this, NOTIF_ID, buildNotification("Say \"entry for baby 1\" or \"entry for baby 2\""),
+                this, NOTIF_ID, buildNotification("Say \"${assistant.wakeWord}\" then your entry or question"),
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0,
             )
         } catch (e: Exception) {
@@ -238,73 +237,44 @@ class VoiceListenerService : LifecycleService() {
 
     // ---------------------------------------------------------------- command handling
 
+    private enum class Awaiting { NOTHING, REQUEST, BABY }
+
+    private var awaiting = Awaiting.NOTHING
+    private var pendingCommand: String? = null
+
     private fun handleUtterance(alternatives: List<String>) {
         if (alternatives.isEmpty()) return
         val now = System.currentTimeMillis()
-        // Prefer the alternative that actually contains a trigger phrase.
-        val withTrigger = alternatives.firstOrNull { parser.hasTrigger(it) }
-        val heard = withTrigger ?: alternatives.first()
-        _state.value = _state.value.copy(lastHeard = heard)
-
-        if (withTrigger != null) {
-            val result = parser.process(withTrigger, now)
-            if (result.commands.isNotEmpty()) save(result.commands)
-            if (result.armedFor.isNotEmpty()) {
-                arm(result.armedFor, now)
-            } else {
-                disarm()
-            }
-            return
-        }
-
-        // No trigger: if we were armed by a previous "entry for baby X", treat this as the command.
-        if (armedFor.isNotEmpty() && now <= armedUntil) {
-            val commands = parser.parseCommand(armedFor, heard, heard, now)
-            disarm()
-            if (commands.isNotEmpty()) save(commands) else say("Cancelled")
-        } else if (armedFor.isNotEmpty()) {
-            disarm()
-        }
-    }
-
-    private fun arm(babies: List<Int>, now: Long) {
-        armedFor = babies
-        armedUntil = now + ARM_TIMEOUT_MS
-        _state.value = _state.value.copy(armedFor = babies)
-        updateNotification("Listening for ${babyLabel(babies)}…")
-        say("${babyLabel(babies)}, go ahead")
-    }
-
-    private fun disarm() {
-        armedFor = emptyList()
-        _state.value = _state.value.copy(armedFor = emptyList())
-    }
-
-    private fun save(commands: List<ParsedCommand>) {
+        val armed = awaiting != Awaiting.NOTHING && now <= armedUntil
+        if (!armed) awaiting = Awaiting.NOTHING
+        val mode = awaiting
+        val pending = pendingCommand
         lifecycleScope.launch {
-            val names = babyNames
-            commands.forEach { repo.saveVoice(it) }
-            val spoken = commands.groupBy { it.baby }.entries.joinToString(". ") { (baby, cmds) ->
-                "${names[baby] ?: "Baby $baby"}: " + cmds.joinToString(", ") { describe(it) }
+            val reply = when (mode) {
+                Awaiting.NOTHING -> assistant.onUtterance(alternatives, now) ?: run {
+                    _state.value = _state.value.copy(lastHeard = alternatives.first())
+                    return@launch
+                }
+                Awaiting.REQUEST -> assistant.onRequest(alternatives.first(), now)
+                Awaiting.BABY -> assistant.onBabyAnswer(alternatives.first(), pending.orEmpty(), now)
             }
-            _state.value = _state.value.copy(lastSaved = spoken)
-            updateNotification("Saved — $spoken")
-            say("Saved. $spoken")
+            _state.value = _state.value.copy(lastHeard = alternatives.first())
+            when {
+                reply.awaitingRequest -> { awaiting = Awaiting.REQUEST; pendingCommand = null }
+                reply.awaitingBabyFor != null -> { awaiting = Awaiting.BABY; pendingCommand = reply.awaitingBabyFor }
+                else -> { awaiting = Awaiting.NOTHING; pendingCommand = null }
+            }
+            armedUntil = System.currentTimeMillis() + ARM_TIMEOUT_MS
+            _state.value = _state.value.copy(lastSaved = reply.text, awaiting = awaiting != Awaiting.NOTHING)
+            updateNotification(if (awaiting != Awaiting.NOTHING) reply.text else "Last: ${reply.text}")
+            say(reply.text)
         }
     }
 
-    private fun describe(c: ParsedCommand): String = buildString {
-        append(c.subtype ?: c.type.label)
-        if (c.subtype != null && c.type.label != c.subtype && c.type.name != "VACCINE") append(" ${c.type.label.lowercase()}")
-        c.amountMl?.let { append(" ").append(formatMl(it)) }
-        c.durationMin?.let { append(" ").append(formatMinutes(it)) }
-        c.side?.let { append(" $it side") }
-        if (c.type.name == "NOTE") append(": ${c.note.orEmpty()}")
-    }
-
-    private fun babyLabel(babies: List<Int>): String {
-        if (babies.size > 1) return "Both babies"
-        return babyNames[babies.first()] ?: "Baby ${babies.first()}"
+    /** Spoken alert from outside (e.g. a medicine timer firing). */
+    private fun announceInternal(text: String) {
+        updateNotification(text)
+        say(text)
     }
 
     // ---------------------------------------------------------------- TTS + beep handling
@@ -323,7 +293,7 @@ class VoiceListenerService : LifecycleService() {
     private fun onSpeechDone() {
         if (!speaking) return
         speaking = false
-        if (armedFor.isNotEmpty()) armedUntil = System.currentTimeMillis() + ARM_TIMEOUT_MS
+        if (awaiting != Awaiting.NOTHING) armedUntil = System.currentTimeMillis() + ARM_TIMEOUT_MS
         scheduleRestart(250)
     }
 
@@ -390,12 +360,13 @@ class VoiceListenerService : LifecycleService() {
         muteBeep(false)
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-        _state.value = _state.value.copy(running = false, listening = false, armedFor = emptyList())
+        _state.value = _state.value.copy(running = false, listening = false, awaiting = false)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         if (!stopped) shutdown()
         tts?.shutdown()
         tts = null
