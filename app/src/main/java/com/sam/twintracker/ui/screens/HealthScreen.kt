@@ -77,6 +77,8 @@ fun HealthScreen(vm: MainViewModel) {
 
     val mine = schedules.filter { it.baby == baby }
     val color = babyColor(baby)
+    val critical = StatusColors.critical
+    val good = StatusColors.good
     val babyName = babies.firstOrNull { it.id == baby }?.name ?: "Baby $baby"
     val medicineNames = entries.filter { it.type == EntryType.MEDICINE }.mapNotNull { it.subtype } + schedules.map { it.name }
 
@@ -144,8 +146,8 @@ fun HealthScreen(vm: MainViewModel) {
                 MeasureCard(
                     title = "Temperature", type = EntryType.TEMPERATURE, entries = entries, color = color,
                     convert = { e -> toUnit(e, tempUnit) }, unit = tempUnit,
-                    threshold = if (tempUnit == "°F") 100.4 else 38.0, thresholdColor = StatusColors.critical,
-                    status = { e -> if (e.isFever) "Fever" to StatusColors.critical else "Normal" to StatusColors.good },
+                    threshold = if (tempUnit == "°F") 100.4 else 38.0, thresholdColor = critical,
+                    status = { e -> if (e.isFever) "Fever" to critical else "Normal" to good },
                     onAdd = { editor = Entry(baby = baby, type = EntryType.TEMPERATURE, unit = tempUnit) },
                     onEdit = { editor = it },
                 )
